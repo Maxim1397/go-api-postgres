@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"encoding/json" // package to encode and decode the json into struct 
+	"encoding/json" // package to encode and decode the json into struct
 	"fmt"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"go-api-postgres/models" // models package with User model
@@ -22,6 +22,8 @@ type response struct {
 	ID      int64  `json:"id,omitempty"`
 	Message string `json:"message,omitempty"`
 }
+
+var pool = createConnection()
 
 //connection with postgres db
 func createConnection() *pgxpool.Pool {
@@ -52,7 +54,14 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&user)
 
 	if err != nil {
-		log.Fatalf("Unable to decode request body.  %v", err)
+		er := fmt.Sprintf("Unable to decode request body.  %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		res := response{
+			ID:      -1,
+			Message: er,
+		}
+		json.NewEncoder(w).Encode(res)
+		return
 	}
 
 	// call insert user function and pass the user to the table
@@ -75,7 +84,7 @@ func GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := getAllUsers()
 
 	if err != nil {
-		log.Fatalf("Unable to get all users. %v", err)
+		log.Printf("Unable to get all users. %v", err)
 	}
 
 	// send all users as response
@@ -90,7 +99,13 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(params["id"])
 
 	if err != nil {
-		log.Fatalf("Unable to convert the string into int.  %v", err)
+		log.Printf("Unable to convert the string into int.  %v", err)
+		res := response{
+			ID:      -1,
+			Message: err.Error(),
+		}
+		json.NewEncoder(w).Encode(res)
+		return
 	}
 
 	var user models.User
@@ -99,7 +114,14 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	err = json.NewDecoder(r.Body).Decode(&user)
 
 	if err != nil {
-		log.Fatalf("Unable to decode the request body.  %v", err)
+		er := fmt.Sprintf("Unable to decode request body.  %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		res := response{
+			ID:      -1,
+			Message: er,
+		}
+		json.NewEncoder(w).Encode(res)
+		return
 	}
 
 	// call update user to update the user
@@ -107,6 +129,9 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	// format the message string
 	msg := fmt.Sprintf("User updated successfully. Total rows/record affected %v", updatedRows)
+	if updatedRows == 0 {
+		msg = fmt.Sprintf("User with this id not exist. Total rows/record affected %v", updatedRows)
+	}
 
 	// format of the response message
 	res := response{
@@ -125,7 +150,14 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(params["id"])
 
 	if err != nil {
-		log.Fatalf("Unable to convert the string into int.  %v", err)
+		fmt.Printf("Unable to convert the string into int.  %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		res := response{
+			ID:      -1,
+			Message: err.Error(),
+		}
+		json.NewEncoder(w).Encode(res)
+		return
 	}
 
 	// call the deleteUser, convert the int to int64
@@ -133,6 +165,9 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	// format the message string
 	msg := fmt.Sprintf("User deleted successfully. Total rows/record affected %v", deletedRows)
+	if deletedRows == 0 {
+		msg = fmt.Sprintf("User with this id not exist. Total rows/record affected %v", deletedRows)
+	}
 
 	// format the reponse message
 	res := response{
@@ -149,10 +184,9 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 func insertUser(user models.User) int64 {
 
 	// create connection with postgres db
-	db := createConnection()
+	db := pool
 
-
-	defer db.Close()
+	//defer db.Close()
 
 	// create the insert sql query
 	sqlStatement := `INSERT INTO users (name, lastname, age, birthdate) VALUES ($1, $2, $3, $4) RETURNING id`
@@ -162,7 +196,7 @@ func insertUser(user models.User) int64 {
 
 	// execute the sql statement
 	// Scan function will save the insert id in the id
-	err := db.QueryRow(context.Background(),sqlStatement, user.Name, user.Lastname, user.Age, user.Birthdate).Scan(&id)
+	err := db.QueryRow(context.Background(), sqlStatement, user.Name, user.Lastname, user.Age, user.Birthdate).Scan(&id)
 
 	if err != nil {
 		log.Fatalf("Unable to execute the query. %v", err)
@@ -176,9 +210,7 @@ func insertUser(user models.User) int64 {
 // get all users from the DB
 func getAllUsers() ([]models.User, error) {
 	// create connection with postgres db
-	db := createConnection()
-
-	defer db.Close()
+	db := pool
 
 	var users []models.User
 
@@ -186,8 +218,7 @@ func getAllUsers() ([]models.User, error) {
 	sqlStatement := `SELECT * FROM users`
 
 	// execute the sql statement
-	rows, err := db.Query(context.Background(),sqlStatement)
-
+	rows, err := db.Query(context.Background(), sqlStatement)
 
 	if err != nil {
 		log.Fatalf("Unable to execute the query. %v", err)
@@ -203,9 +234,9 @@ func getAllUsers() ([]models.User, error) {
 		// unmarshal the row object to user
 		err = rows.Scan(&user.ID, &user.Name, &user.Lastname, &user.Age, &user.Birthdate)
 
-		if err != nil {
-			log.Fatalf("Unable to scan the row. %v", err)
-		}
+		//if err != nil {
+		//	log.Fatalf("Unable to scan the row. %v", err)
+		//}
 
 		// append the user in the users slice
 		users = append(users, user)
@@ -219,16 +250,13 @@ func getAllUsers() ([]models.User, error) {
 func updateUser(id int64, user models.User) int64 {
 
 	// create connection with postgres db
-	db := createConnection()
-
-	// close the db connection
-	defer db.Close()
+	db := pool
 
 	// create the update sql query
 	sqlStatement := `UPDATE users SET name=$2, lastname=$3, age=$4, birthdate=$5 WHERE id=$1`
 
 	// execute the sql statement
-	res, err := db.Exec(context.Background(),sqlStatement, id, user.Name, user.Lastname, user.Age, user.Birthdate)
+	res, err := db.Exec(context.Background(), sqlStatement, id, user.Name, user.Lastname, user.Age, user.Birthdate)
 
 	if err != nil {
 		log.Fatalf("Unable to execute the query. %v", err)
@@ -236,7 +264,6 @@ func updateUser(id int64, user models.User) int64 {
 
 	// check how many rows affected
 	rowsAffected := res.RowsAffected()
-
 
 	//fmt.Printf("Total rows/record affected %v", rowsAffected)
 
@@ -247,16 +274,16 @@ func updateUser(id int64, user models.User) int64 {
 func deleteUser(id int64) int64 {
 
 	// create connection with postgres db
-	db := createConnection()
+	db := pool
 
 	// close the db connection
-	defer db.Close()
+	//defer db.Close()
 
 	// create the delete sql query
 	sqlStatement := `DELETE FROM users WHERE id=$1`
 
 	// execute the sql statement
-	res, err := db.Exec(context.Background(),sqlStatement, id)
+	res, err := db.Exec(context.Background(), sqlStatement, id)
 
 	if err != nil {
 		log.Fatalf("Unable to execute the query. %v", err)
@@ -264,7 +291,6 @@ func deleteUser(id int64) int64 {
 
 	// check how many rows affected
 	rowsAffected := res.RowsAffected()
-
 
 	//fmt.Printf("Total rows/record affected %v", rowsAffected)
 
